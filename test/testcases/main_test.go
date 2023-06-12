@@ -19,7 +19,7 @@ import (
 	"github.com/milvus-io/milvus-sdk-go/v2/test/common"
 )
 
-var addr = flag.String("addr", "localhost:19530", "server host and port")
+var addr = flag.String("addr", "10.101.83.208:19530", "server host and port")
 
 func init() {
 	log.SetFlags(log.Ldate | log.Ltime | log.Lshortfile)
@@ -70,13 +70,13 @@ func createDefaultCollection(ctx context.Context, t *testing.T, mc *base.MilvusC
 	schema := common.GenSchema(collName, autoID, fields)
 
 	// create default collection with fields: [int64, float, floatVector] and vector dim is default 128
-	errCreateCollection := mc.CreateCollection(ctx, schema, shards)
+	errCreateCollection := mc.CreateCollection(ctx, schema, shards, client.WithConsistencyLevel(entity.ClStrong))
 	common.CheckErr(t, errCreateCollection, true)
 
 	// close connect and drop collection after each case
-	t.Cleanup(func() {
-		mc.DropCollection(ctx, collName)
-	})
+	//t.Cleanup(func() {
+	//	mc.DropCollection(ctx, collName)
+	//})
 	return collName
 }
 

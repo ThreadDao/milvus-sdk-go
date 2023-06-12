@@ -1,9 +1,9 @@
-//go:build L0
 
 package testcases
 
 import (
 	"fmt"
+	"log"
 	"testing"
 	"time"
 
@@ -16,13 +16,13 @@ import (
 
 // test delete int64 pks
 func TestDelete(t *testing.T) {
-	t.Skip("Issue: https://github.com/milvus-io/milvus-sdk-go/issues/368")
+	//t.Skip("Issue: https://github.com/milvus-io/milvus-sdk-go/issues/368")
 	ctx := createContext(t, time.Second*common.DefaultTimeout)
 	// connect
 	mc := createMilvusClient(ctx, t)
 
 	// create, insert, index
-	collName, ids := createCollectionWithDataIndex(ctx, t, mc, true, true)
+	collName, ids := createCollectionWithDataIndex(ctx, t, mc, false, true)
 
 	// Load collection
 	errLoad := mc.LoadCollection(ctx, collName, false)
@@ -30,13 +30,27 @@ func TestDelete(t *testing.T) {
 
 	// delete
 	deleteIds := entity.NewColumnInt64(common.DefaultIntFieldName, ids.(*entity.ColumnInt64).Data()[:10])
+	log.Printf("delete ids %v", deleteIds.Data())
 	errDelete := mc.DeleteByPks(ctx, collName, common.DefaultPartition, deleteIds)
 	common.CheckErr(t, errDelete, true)
 
 	// query, verify delete success
 	queryRes, errQuery := mc.Query(ctx, collName, []string{common.DefaultPartition}, deleteIds, []string{})
 	common.CheckErr(t, errQuery, true)
-	require.Empty(t, queryRes)
+	log.Printf("query result %v", queryRes[0].(*entity.ColumnInt64).Data())
+	log.Printf("query len %v", queryRes[0].Len())
+	require.Zero(t, queryRes[0].Len())
+}
+
+func TestDel(t *testing.T) {
+	ctx := createContext(t, time.Second*common.DefaultTimeout)
+	// connect
+	mc := createMilvusClient(ctx, t)
+	collName := "cALFyY"
+
+	deleteIds := entity.NewColumnInt64(common.DefaultIntFieldName, []int64{1, 2, 100})
+	queryRes, _ := mc.Query(ctx, collName, []string{}, deleteIds, []string{})
+	log.Printf("query result %v", queryRes[0].(*entity.ColumnInt64).Data())
 }
 
 // test delete with string pks
