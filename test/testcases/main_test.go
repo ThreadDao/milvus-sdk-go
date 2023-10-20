@@ -19,7 +19,7 @@ import (
 	"github.com/milvus-io/milvus-sdk-go/v2/test/common"
 )
 
-var addr = flag.String("addr", "localhost:19530", "server host and port")
+var addr = flag.String("addr", "10.104.4.144:19530", "server host and port")
 
 func init() {
 	log.SetFlags(log.Ldate | log.Ltime | log.Lshortfile)
@@ -111,9 +111,9 @@ func createDefaultCollection(ctx context.Context, t *testing.T, mc *base.MilvusC
 	common.CheckErr(t, errCreateCollection, true)
 
 	// close connect and drop collection after each case
-	t.Cleanup(func() {
-		mc.DropCollection(ctx, collName)
-	})
+	//t.Cleanup(func() {
+	//	mc.DropCollection(ctx, collName)
+	//})
 	return collName
 }
 

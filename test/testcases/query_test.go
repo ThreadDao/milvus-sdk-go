@@ -1,4 +1,4 @@
-//go:build L0
+///go:build L0
 
 package testcases
 
@@ -304,7 +304,6 @@ func TestQueryEmptyOutputFields(t *testing.T) {
 		)
 		common.CheckOutputFields(t, queryFloatOutputs, []string{common.DefaultIntFieldName, common.DefaultFloatFieldName})
 	}
-
 }
 
 // test query output int64 and float and floatVector fields
@@ -604,6 +603,22 @@ func TestQueryJsonDynamicFieldRows(t *testing.T) {
 	}
 
 	common.CheckQueryResult(t, queryResult, []entity.Column{pkColumn, jsonColumn, dynamicColumn})
+}
+
+func TestQueryDebug(t *testing.T) {
+	ctx := createContext(t, time.Second*common.DefaultTimeout)
+	// connect
+	mc := createMilvusClient(ctx, t)
+	collName := "fouram_hdJ0k6nt"
+	//collName := "eAuxkC"
+	for i := 0; i < 100; i++ {
+		start := time.Now()
+		res, err := mc.Query(ctx, collName, []string{}, "id < 100000", []string{})
+		elapsed := time.Since(start)
+		common.CheckErr(t, err, true)
+		log.Println(res.GetColumn("id").Len())
+		log.Println(elapsed)
+	}
 }
 
 // TODO offset and limit
