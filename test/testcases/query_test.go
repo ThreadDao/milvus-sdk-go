@@ -611,14 +611,23 @@ func TestQueryDebug(t *testing.T) {
 	mc := createMilvusClient(ctx, t)
 	collName := "fouram_hdJ0k6nt"
 	//collName := "eAuxkC"
-	for i := 0; i < 100; i++ {
+	var costs []time.Duration
+	for i := 0; i < 500; i++ {
 		start := time.Now()
 		res, err := mc.Query(ctx, collName, []string{}, "id < 100000", []string{})
 		elapsed := time.Since(start)
 		common.CheckErr(t, err, true)
 		log.Println(res.GetColumn("id").Len())
-		log.Println(elapsed)
+		log.Println(elapsed.Milliseconds())
+		costs = append(costs, elapsed)
 	}
+	log.Println(costs)
+	sum := time.Millisecond * 0
+	for _, c := range costs {
+		sum += c
+	}
+	log.Println(sum)
+	log.Println(sum / 500)
 }
 
 // TODO offset and limit
