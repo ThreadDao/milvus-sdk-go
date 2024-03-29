@@ -18,7 +18,8 @@ import (
 	"github.com/milvus-io/milvus-sdk-go/v2/test/common"
 )
 
-var addr = flag.String("addr", "localhost:19530", "server host and port")
+//var addr = flag.String("addr", "localhost:19530", "server host and port")
+var addr = flag.String("addr", "10.104.31.230:19530", "server host and port")
 
 func init() {
 	log.SetFlags(log.Ldate | log.Ltime | log.Lshortfile)

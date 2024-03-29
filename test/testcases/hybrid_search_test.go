@@ -1,4 +1,4 @@
-//go:build L0
+///go:build L0
 
 package testcases
 
@@ -45,6 +45,7 @@ func TestHybridSearchDefault(t *testing.T) {
 	common.CheckOutputFields(t, searchRes[0].Fields, []string{common.DefaultIntFieldName, common.DefaultFloatFieldName, common.DefaultFloatVecFieldName})
 }
 
+// TODO ror
 // hybrid search default -> verify success
 func TestHybridSearchMultiVectorsDefault(t *testing.T) {
 	t.Parallel()
@@ -59,11 +60,15 @@ func TestHybridSearchMultiVectorsDefault(t *testing.T) {
 		dp := DataParams{DoInsert: true, CollectionFieldsType: AllFields, start: 0, nb: common.DefaultNb,
 			dim: common.DefaultDim, EnableDynamicField: enableDynamic}
 
-		// index params
 		indexHnsw, _ := entity.NewIndexHNSW(entity.L2, 8, 96)
+		indexBinary, _ := entity.NewIndexBinIvfFlat(entity.JACCARD, 64)
 		ips := make([]IndexParams, 4)
 		for _, fieldName := range common.AllVectorsFieldsName {
-			ips = append(ips, IndexParams{BuildIndex: true, Index: indexHnsw, FieldName: fieldName, async: false})
+			if fieldName == common.DefaultBinaryVecFieldName {
+				ips = append(ips, IndexParams{BuildIndex: true, Index: indexBinary, FieldName: fieldName, async: false})
+			} else {
+				ips = append(ips, IndexParams{BuildIndex: true, Index: indexHnsw, FieldName: fieldName, async: false})
+			}
 		}
 
 		collName := prepareCollection(ctx, t, mc, cp, WithDataParams(dp), WithIndexParams(ips), WithCreateOption(client.WithConsistencyLevel(entity.ClStrong)))
@@ -124,9 +129,14 @@ func TestHybridSearchInvalidParams(t *testing.T) {
 
 	// index params
 	indexHnsw, _ := entity.NewIndexHNSW(entity.L2, 8, 96)
+	indexBinary, _ := entity.NewIndexBinIvfFlat(entity.JACCARD, 64)
 	ips := make([]IndexParams, 4)
 	for _, fieldName := range common.AllVectorsFieldsName {
-		ips = append(ips, IndexParams{BuildIndex: true, Index: indexHnsw, FieldName: fieldName, async: false})
+		if fieldName == common.DefaultBinaryVecFieldName {
+			ips = append(ips, IndexParams{BuildIndex: true, Index: indexBinary, FieldName: fieldName, async: false})
+		} else {
+			ips = append(ips, IndexParams{BuildIndex: true, Index: indexHnsw, FieldName: fieldName, async: false})
+		}
 	}
 
 	collName := prepareCollection(ctx, t, mc, cp, WithDataParams(dp), WithIndexParams(ips),
@@ -139,7 +149,7 @@ func TestHybridSearchInvalidParams(t *testing.T) {
 	queryVec2 := common.GenSearchVectors(1, common.DefaultDim, entity.FieldTypeBinaryVector)
 	sReqs := []*client.ANNSearchRequest{
 		client.NewANNSearchRequest(common.DefaultFloatVecFieldName, entity.L2, "", queryVec1, sp, common.DefaultTopK),
-		client.NewANNSearchRequest(common.DefaultBinaryVecFieldName, entity.L2, "", queryVec2, sp, common.DefaultTopK),
+		client.NewANNSearchRequest(common.DefaultBinaryVecFieldName, entity.JACCARD, "", queryVec2, sp, common.DefaultTopK),
 	}
 	for _, invalidLimit := range []int{-1, 0, common.MaxTopK + 1} {
 		sReqsInvalid := []*client.ANNSearchRequest{
@@ -198,16 +208,18 @@ func TestHybridSearchInvalidVectors(t *testing.T) {
 	ranker := client.NewRRFReranker()
 	sp, _ := entity.NewIndexFlatSearchParam()
 	queryVecNq := common.GenSearchVectors(common.DefaultNq, common.DefaultDim, entity.FieldTypeFloatVector)
+	queryVecBinary := common.GenSearchVectors(1, common.DefaultDim, entity.FieldTypeBinaryVector)
 	queryVecType := common.GenSearchVectors(1, common.DefaultDim, entity.FieldTypeFloat16Vector)
 	queryVecDim := common.GenSearchVectors(1, common.DefaultDim*2, entity.FieldTypeFloatVector)
 	sReqs := [][]*client.ANNSearchRequest{
-		{client.NewANNSearchRequest(common.DefaultFloatVecFieldName, entity.L2, "", queryVecNq, sp, common.DefaultTopK)},   // nq != 1
-		{client.NewANNSearchRequest(common.DefaultFloatVecFieldName, entity.L2, "", queryVecType, sp, common.DefaultTopK)}, // TODO vector type not match
-		{client.NewANNSearchRequest(common.DefaultFloatVecFieldName, entity.L2, "", queryVecDim, sp, common.DefaultTopK)},  // vector dim not match
+		{client.NewANNSearchRequest(common.DefaultFloatVecFieldName, entity.L2, "", queryVecNq, sp, common.DefaultTopK)},           // nq != 1
+		{client.NewANNSearchRequest(common.DefaultFloatVecFieldName, entity.L2, "", queryVecType, sp, common.DefaultTopK)},         // TODO vector type not match
+		{client.NewANNSearchRequest(common.DefaultFloatVecFieldName, entity.L2, "", queryVecDim, sp, common.DefaultTopK)},          // vector dim not match
+		{client.NewANNSearchRequest(common.DefaultBinaryVecFieldName, entity.JACCARD, "", queryVecBinary, sp, common.DefaultTopK)}, // not exist vector types
 	}
 	for _, invalidSReq := range sReqs {
 		_, errSearch := mc.HybridSearch(ctx, collName, []string{}, common.DefaultTopK, []string{}, ranker, invalidSReq)
-		common.CheckErr(t, errSearch, false, "nq should be equal to 1", "vector dimension mismatch")
+		common.CheckErr(t, errSearch, false, "nq should be equal to 1", "vector dimension mismatch", "failed to get field schema by name")
 	}
 }
 

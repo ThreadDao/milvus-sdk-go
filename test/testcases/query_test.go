@@ -1,4 +1,4 @@
-//go:build L0
+///go:build L0
 
 package testcases
 
