@@ -496,6 +496,15 @@ func (mc *MilvusClient) QueryIterator(ctx context.Context, opt *client.QueryIter
 	return itr, err
 }
 
+// SearchIterator from collection
+func (mc *MilvusClient) SearchIterator(ctx context.Context, opt *client.SearchIteratorOption) (*client.SearchIterator, error) {
+	funcName := "SearchIterator"
+	preRequest(funcName, ctx, opt)
+	itr, err := mc.mClient.SearchIterator(ctx, opt)
+	postResponse(funcName, err, itr)
+	return itr, err
+}
+
 // -- row based apis --
 
 // CreateCollectionByRow Create Collection By Row

@@ -1,4 +1,4 @@
-//go:build L0
+///go:build L0
 
 package testcases
 
@@ -1553,62 +1553,6 @@ func TestQueryIteratorOutputFieldDynamic(t *testing.T) {
 
 func TestQueryIteratorExpr(t *testing.T) {
 	//t.Log("https://github.com/milvus-io/milvus-sdk-go/issues/756")
-	type exprCount struct {
-		expr  string
-		count int
-	}
-	capacity := common.TestCapacity
-	exprLimits := []exprCount{
-		{expr: fmt.Sprintf("%s in [0, 1, 2]", common.DefaultIntFieldName), count: 3},
-		{expr: fmt.Sprintf("%s >= 1000 || %s > 2000", common.DefaultIntFieldName, common.DefaultIntFieldName), count: 2000},
-		{expr: fmt.Sprintf("%s >= 1000 and %s < 2000", common.DefaultIntFieldName, common.DefaultIntFieldName), count: 1000},
-
-		//json and dynamic field filter expr: == < in bool/ list/ int
-		{expr: fmt.Sprintf("%s['number'] == 0", common.DefaultJSONFieldName), count: 1500 / 2},
-		{expr: fmt.Sprintf("%s['number'] < 100 and %s['number'] != 0", common.DefaultJSONFieldName, common.DefaultJSONFieldName), count: 50},
-		{expr: fmt.Sprintf("%s < 100", common.DefaultDynamicNumberField), count: 100},
-		{expr: "dynamicNumber % 2 == 0", count: 1500},
-		{expr: fmt.Sprintf("%s == false", common.DefaultDynamicBoolField), count: 2000},
-		{expr: fmt.Sprintf("%s in ['1', '2'] ", common.DefaultDynamicStringField), count: 2},
-		{expr: fmt.Sprintf("%s['string'] in ['1', '2', '5'] ", common.DefaultJSONFieldName), count: 3},
-		{expr: fmt.Sprintf("%s['list'] == [1, 2] ", common.DefaultJSONFieldName), count: 1},
-		{expr: fmt.Sprintf("%s['list'][0] < 10 ", common.DefaultJSONFieldName), count: 5},
-		{expr: fmt.Sprintf("%s[\"dynamicList\"] != [2, 3]", common.DefaultDynamicFieldName), count: 0},
-
-		// json contains
-		{expr: fmt.Sprintf("json_contains (%s['list'], 2)", common.DefaultJSONFieldName), count: 1},
-		{expr: fmt.Sprintf("json_contains (%s['number'], 0)", common.DefaultJSONFieldName), count: 0},
-		{expr: fmt.Sprintf("JSON_CONTAINS_ANY (%s['list'], [1, 3])", common.DefaultJSONFieldName), count: 2},
-		// string like
-		{expr: "dynamicString like '1%' ", count: 1111},
-
-		// key exist
-		{expr: fmt.Sprintf("exists %s['list']", common.DefaultJSONFieldName), count: common.DefaultNb / 2},
-		{expr: fmt.Sprintf("exists a "), count: 0},
-		{expr: fmt.Sprintf("exists %s ", common.DefaultDynamicStringField), count: common.DefaultNb},
-
-		// data type not match and no error
-		{expr: fmt.Sprintf("%s['number'] == '0' ", common.DefaultJSONFieldName), count: 0},
-
-		// json field
-		{expr: fmt.Sprintf("%s >= 1500", common.DefaultJSONFieldName), count: 1500 / 2},                                  // json >= 1500
-		{expr: fmt.Sprintf("%s > 1499.5", common.DefaultJSONFieldName), count: 1500 / 2},                                 // json >= 1500.0
-		{expr: fmt.Sprintf("%s like '21%%'", common.DefaultJSONFieldName), count: 100 / 4},                               // json like '21%'
-		{expr: fmt.Sprintf("%s == [1503, 1504]", common.DefaultJSONFieldName), count: 1},                                 // json == [1,2]
-		{expr: fmt.Sprintf("%s[0] > 1", common.DefaultJSONFieldName), count: 1500 / 4},                                   // json[0] > 1
-		{expr: fmt.Sprintf("%s[0][0] > 1", common.DefaultJSONFieldName), count: 0},                                       // json == [1,2]
-		{expr: fmt.Sprintf("%s[0] == false", common.DefaultBoolArrayField), count: common.DefaultNb / 2},                 //  array[0] ==
-		{expr: fmt.Sprintf("%s[0] > 0", common.DefaultInt64ArrayField), count: common.DefaultNb - 1},                     //  array[0] >
-		{expr: fmt.Sprintf("%s[0] > 0", common.DefaultInt8ArrayField), count: 1524},                                      //  array[0] > int8 range: [-128, 127]
-		{expr: fmt.Sprintf("array_contains (%s, %d)", common.DefaultInt16ArrayField, capacity), count: capacity},         // array_contains(array, 1)
-		{expr: fmt.Sprintf("json_contains (%s, 1)", common.DefaultInt32ArrayField), count: 2},                            // json_contains(array, 1)
-		{expr: fmt.Sprintf("array_contains (%s, 1000000)", common.DefaultInt32ArrayField), count: 0},                     // array_contains(array, 1)
-		{expr: fmt.Sprintf("json_contains_all (%s, [90, 91])", common.DefaultInt64ArrayField), count: 91},                // json_contains_all(array, [x])
-		{expr: fmt.Sprintf("json_contains_any (%s, [0, 100, 10])", common.DefaultFloatArrayField), count: 101},           // json_contains_any (array, [x])
-		{expr: fmt.Sprintf("%s == [0, 1]", common.DefaultDoubleArrayField), count: 0},                                    //  array ==
-		{expr: fmt.Sprintf("array_length(%s) == %d", common.DefaultDoubleArrayField, capacity), count: common.DefaultNb}, //  array_length
-	}
-
 	ctx := createContext(t, time.Second*common.DefaultTimeout)
 	// connect
 	mc := createMilvusClient(ctx, t)
@@ -1640,11 +1584,11 @@ func TestQueryIteratorExpr(t *testing.T) {
 	common.CheckErr(t, errLoad, true)
 	batch := 500
 
-	for _, exprLimit := range exprLimits {
-		log.Printf("case expr is: %s, limit=%d", exprLimit.expr, exprLimit.count)
-		itr, err := mc.QueryIterator(ctx, client.NewQueryIteratorOption(collName).WithBatchSize(batch).WithExpr(exprLimit.expr))
+	for _, exprLimit := range common.ExprLimits {
+		log.Printf("case expr is: %s, limit=%d", exprLimit.Expr, exprLimit.Count)
+		itr, err := mc.QueryIterator(ctx, client.NewQueryIteratorOption(collName).WithBatchSize(batch).WithExpr(exprLimit.Expr))
 		common.CheckErr(t, err, true)
-		common.CheckQueryIteratorResult(ctx, t, itr, exprLimit.count, common.WithExpBatchSize(common.GenBatchSizes(exprLimit.count, batch)))
+		common.CheckQueryIteratorResult(ctx, t, itr, exprLimit.Count, common.WithExpBatchSize(common.GenBatchSizes(exprLimit.Count, batch)))
 	}
 }
 

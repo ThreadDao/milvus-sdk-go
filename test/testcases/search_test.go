@@ -1,4 +1,4 @@
-//go:build L0
+///go:build L0
 
 package testcases
 
@@ -1972,6 +1972,479 @@ func TestRangeSearchSparseVector(t *testing.T) {
 			require.GreaterOrEqual(t, s, float32(0))
 			require.Less(t, s, float32(0.8))
 		}
+	}
+}
+
+/*******************************************
+search iterator cases
+*******************************************/
+
+func TestSearchIteratorDefault(t *testing.T) {
+	ctx := createContext(t, time.Second*common.DefaultTimeout)
+	// connect
+	mc := createMilvusClient(ctx, t)
+
+	// create collection
+	cp := CollectionParams{CollectionFieldsType: Int64FloatVec, AutoID: false, EnableDynamicField: true,
+		ShardsNum: common.DefaultShards, Dim: common.DefaultDim}
+	collName := createCollection(ctx, t, mc, cp)
+
+	// insert
+	dpColumns := DataParams{CollectionName: collName, PartitionName: "", CollectionFieldsType: Int64FloatVec,
+		start: 0, nb: common.DefaultNb, dim: common.DefaultDim, EnableDynamicField: true, WithRows: false}
+	_, _ = insertData(ctx, t, mc, dpColumns)
+
+	dpRows := DataParams{CollectionName: collName, PartitionName: "", CollectionFieldsType: Int64FloatVec,
+		start: common.DefaultNb, nb: common.DefaultNb, dim: common.DefaultDim, EnableDynamicField: true, WithRows: true}
+	_, _ = insertData(ctx, t, mc, dpRows)
+
+	idx, _ := entity.NewIndexHNSW(entity.COSINE, 8, 96)
+	_ = mc.CreateIndex(ctx, collName, common.DefaultFloatVecFieldName, idx, false)
+
+	// Load collection
+	errLoad := mc.LoadCollection(ctx, collName, false)
+	common.CheckErr(t, errLoad, true)
+
+	// search iterator with default batch
+	sp, _ := entity.NewIndexHNSWSearchParam(80)
+	queryVec := common.GenSearchVectors(1, common.DefaultDim, entity.FieldTypeFloatVector)
+	opt := client.NewSearchIteratorOption(collName, common.DefaultFloatVecFieldName, sp, queryVec[0], entity.COSINE)
+	itr, err := mc.SearchIterator(ctx, opt)
+	common.CheckErr(t, err, true)
+	common.CheckSearchIteratorResult(ctx, t, itr, common.DefaultNb*2)
+}
+
+func TestSearchIteratorHitEmpty(t *testing.T) {
+	ctx := createContext(t, time.Second*common.DefaultTimeout)
+	// connect
+	mc := createMilvusClient(ctx, t)
+
+	// create collection
+	cp := CollectionParams{CollectionFieldsType: Int64FloatVec, AutoID: false, EnableDynamicField: true,
+		ShardsNum: common.DefaultShards, Dim: common.DefaultDim}
+	collName := createCollection(ctx, t, mc, cp)
+
+	idx, _ := entity.NewIndexHNSW(entity.L2, 8, 96)
+	_ = mc.CreateIndex(ctx, collName, common.DefaultFloatVecFieldName, idx, false)
+
+	// Load collection
+	errLoad := mc.LoadCollection(ctx, collName, false)
+	common.CheckErr(t, errLoad, true)
+
+	// search iterator from empty collection
+	sp, _ := entity.NewIndexHNSWSearchParam(80)
+	queryVec := common.GenSearchVectors(1, common.DefaultDim, entity.FieldTypeFloatVector)
+	opt := client.NewSearchIteratorOption(collName, common.DefaultFloatVecFieldName, sp, queryVec[0], entity.COSINE)
+	itr, err := mc.SearchIterator(ctx, opt)
+	common.CheckErr(t, err, true)
+	common.CheckSearchIteratorResult(ctx, t, itr, 0)
+}
+
+func TestSearchIteratorBatchSize(t *testing.T) {
+	ctx := createContext(t, time.Second*common.DefaultTimeout)
+	// connect and create collection
+	mc := createMilvusClient(ctx, t)
+	cp := CollectionParams{CollectionFieldsType: Int64FloatVec, AutoID: false, EnableDynamicField: true,
+		ShardsNum: common.DefaultShards, Dim: common.DefaultDim}
+	collName := createCollection(ctx, t, mc, cp)
+
+	// insert
+	nb := 2001
+	dp := DataParams{CollectionName: collName, PartitionName: "", CollectionFieldsType: Int64FloatVec,
+		start: 0, nb: nb, dim: common.DefaultDim, EnableDynamicField: true, WithRows: false}
+	_, _ = insertData(ctx, t, mc, dp)
+
+	idx, _ := entity.NewIndexHNSW(entity.COSINE, 8, 96)
+	_ = mc.CreateIndex(ctx, collName, common.DefaultFloatVecFieldName, idx, false)
+
+	// Load collection
+	errLoad := mc.LoadCollection(ctx, collName, false)
+	common.CheckErr(t, errLoad, true)
+
+	type batchStruct struct {
+		batch        int
+		expBatchSize []int
+	}
+	batchStructs := []batchStruct{
+		{batch: nb / 2, expBatchSize: common.GenBatchSizes(nb, nb/2)},
+		{batch: nb, expBatchSize: common.GenBatchSizes(nb, nb)},
+		{batch: nb + 1, expBatchSize: common.GenBatchSizes(nb, nb+1)},
+	}
+
+	// search iterator from empty collection
+	sp, _ := entity.NewIndexHNSWSearchParam(80)
+	queryVec := common.GenSearchVectors(1, common.DefaultDim, entity.FieldTypeFloatVector)
+
+	for _, _batchStruct := range batchStructs {
+		opt := client.NewSearchIteratorOption(collName, common.DefaultFloatVecFieldName, sp, queryVec[0], entity.COSINE).WithBatchSize(_batchStruct.batch)
+		itr, err := mc.SearchIterator(ctx, opt)
+		common.CheckErr(t, err, true)
+		common.CheckSearchIteratorResult(ctx, t, itr, nb, common.WithExpBatchSize(_batchStruct.expBatchSize))
+	}
+}
+
+func TestSearchIteratorOutputAllFields(t *testing.T) {
+	t.Parallel()
+	ctx := createContext(t, time.Second*common.DefaultTimeout)
+	// connect
+	mc := createMilvusClient(ctx, t)
+	for _, dynamic := range [2]bool{false, true} {
+		// create collection
+		cp := CollectionParams{CollectionFieldsType: AllFields, AutoID: false, EnableDynamicField: dynamic,
+			ShardsNum: common.DefaultShards, Dim: common.DefaultDim}
+		collName := createCollection(ctx, t, mc, cp, client.WithConsistencyLevel(entity.ClStrong))
+
+		// insert
+		nb := 2501
+		dp := DataParams{CollectionName: collName, PartitionName: "", CollectionFieldsType: AllFields,
+			start: 0, nb: nb, dim: common.DefaultDim, EnableDynamicField: dynamic, WithRows: false}
+		insertData(ctx, t, mc, dp)
+
+		indexHnsw, _ := entity.NewIndexHNSW(entity.L2, 8, 96)
+		indexBinary, _ := entity.NewIndexBinIvfFlat(entity.JACCARD, 64)
+		for _, fieldName := range common.AllVectorsFieldsName {
+			if fieldName == common.DefaultBinaryVecFieldName {
+				mc.CreateIndex(ctx, collName, fieldName, indexBinary, false)
+			} else {
+				mc.CreateIndex(ctx, collName, fieldName, indexHnsw, false)
+			}
+		}
+
+		// Load collection
+		errLoad := mc.LoadCollection(ctx, collName, false)
+		common.CheckErr(t, errLoad, true)
+
+		// output * fields
+		nbFilter := 1001
+		batch := 500
+		expr := fmt.Sprintf("%s < %d", common.DefaultIntFieldName, nbFilter)
+
+		sp, _ := entity.NewIndexHNSWSearchParam(80)
+		queryVec := common.GenSearchVectors(1, common.DefaultDim, entity.FieldTypeFloatVector)
+		opt := client.NewSearchIteratorOption(collName, common.DefaultFloatVecFieldName, sp, queryVec[0], entity.L2).
+			WithBatchSize(batch).WithOutputFields("*").WithExpr(expr)
+		itr, err := mc.SearchIterator(ctx, opt)
+		common.CheckErr(t, err, true)
+		allFields := common.GetAllFieldsName(dynamic, false)
+		common.CheckSearchIteratorResult(ctx, t, itr, nbFilter, common.WithExpBatchSize(common.GenBatchSizes(nbFilter, batch)), common.WithExpOutputFields(allFields))
+	}
+}
+
+func TestSearchIteratorOutputSparseFieldsRows(t *testing.T) {
+	t.Parallel()
+	ctx := createContext(t, time.Second*common.DefaultTimeout)
+	// connect
+	mc := createMilvusClient(ctx, t)
+	for _, withRows := range [2]bool{true, false} {
+		// create collection
+		cp := CollectionParams{CollectionFieldsType: Int64VarcharSparseVec, AutoID: false, EnableDynamicField: true,
+			ShardsNum: common.DefaultShards, Dim: common.DefaultDim, MaxLength: common.TestMaxLen}
+		collName := createCollection(ctx, t, mc, cp)
+
+		// insert
+		nb := 2501
+		dp := DataParams{CollectionName: collName, PartitionName: "", CollectionFieldsType: Int64VarcharSparseVec,
+			start: 0, nb: nb, dim: common.DefaultDim, EnableDynamicField: true, WithRows: withRows, maxLenSparse: 1000}
+		_, _ = insertData(ctx, t, mc, dp)
+
+		indexHnsw, _ := entity.NewIndexHNSW(entity.L2, 8, 96)
+		indexSparse, _ := entity.NewIndexSparseInverted(entity.IP, 0.1)
+		mc.CreateIndex(ctx, collName, common.DefaultFloatVecFieldName, indexHnsw, false)
+		mc.CreateIndex(ctx, collName, common.DefaultSparseVecFieldName, indexSparse, false)
+
+		// Load collection
+		errLoad := mc.LoadCollection(ctx, collName, false)
+		common.CheckErr(t, errLoad, true)
+
+		sp, _ := entity.NewIndexSparseInvertedSearchParam(0)
+		queryVec := common.GenSearchVectors(1, 100, entity.FieldTypeSparseVector)
+		opt := client.NewSearchIteratorOption(collName, common.DefaultSparseVecFieldName, sp, queryVec[0], entity.IP).WithOutputFields("*").WithBatchSize(400)
+		itr, err := mc.SearchIterator(ctx, opt)
+		common.CheckErr(t, err, true)
+		fields := []string{common.DefaultIntFieldName, common.DefaultVarcharFieldName, common.DefaultFloatVecFieldName, common.DefaultSparseVecFieldName, common.DefaultDynamicFieldName}
+		common.CheckSearchIteratorResult(ctx, t, itr, nb, common.WithExpBatchSize(common.GenBatchSizes(nb, 400)), common.WithExpOutputFields(fields))
+	}
+}
+
+func TestSearchIteratorInvalid(t *testing.T) {
+	ctx := createContext(t, time.Second*common.DefaultTimeout)
+	// connect and create collection
+	mc := createMilvusClient(ctx, t)
+	cp := CollectionParams{CollectionFieldsType: Int64FloatVec, AutoID: false, EnableDynamicField: false,
+		ShardsNum: common.DefaultShards, Dim: common.DefaultDim}
+	collName := createCollection(ctx, t, mc, cp)
+
+	// insert
+	nb := 201
+	dp := DataParams{CollectionName: collName, PartitionName: "", CollectionFieldsType: Int64FloatVec,
+		start: 0, nb: nb, dim: common.DefaultDim, EnableDynamicField: false, WithRows: false}
+	_, _ = insertData(ctx, t, mc, dp)
+
+	idx, _ := entity.NewIndexHNSW(entity.L2, 8, 96)
+	_ = mc.CreateIndex(ctx, collName, common.DefaultFloatVecFieldName, idx, false)
+
+	// Load collection
+	errLoad := mc.LoadCollection(ctx, collName, false)
+	common.CheckErr(t, errLoad, true)
+
+	// search iterator with not existed collection name
+	sp, _ := entity.NewIndexHNSWSearchParam(70)
+	queryVec := common.GenSearchVectors(1, common.DefaultDim, entity.FieldTypeFloatVector)
+	_, err := mc.SearchIterator(ctx, client.NewSearchIteratorOption("aaa", common.DefaultFloatVecFieldName, sp, queryVec[0], entity.L2))
+	common.CheckErr(t, err, false, "can't find collection")
+
+	// search iterator with not existed partition name
+	_, errPar := mc.SearchIterator(ctx, client.NewSearchIteratorOption(collName, common.DefaultFloatVecFieldName, sp, queryVec[0], entity.L2).WithPartitions("aaa"))
+	common.CheckErr(t, errPar, false, "partition name aaa not found")
+	_, errPar = mc.SearchIterator(ctx, client.NewSearchIteratorOption(collName, common.DefaultFloatVecFieldName, sp, queryVec[0], entity.L2).WithPartitions("aaa", common.DefaultPartition))
+	common.CheckErr(t, errPar, false, "partition name aaa not found")
+
+	// search iterator with invalid batch size
+	for _, batch := range []int{-1, 0} {
+		_, err := mc.SearchIterator(ctx, client.NewSearchIteratorOption(collName, common.DefaultFloatVecFieldName, sp, queryVec[0], entity.L2).WithBatchSize(batch))
+		common.CheckErr(t, err, false, "batch size cannot less than 1")
+	}
+
+	// search iterator with inconsistent metric type
+	_, errMetric := mc.SearchIterator(ctx, client.NewSearchIteratorOption(collName, common.DefaultFloatVecFieldName, sp, queryVec[0], entity.COSINE))
+	common.CheckErr(t, errMetric, false, "metric type not match")
+
+	// search iterator with not match search params
+	spSparse, _ := entity.NewIndexSparseInvertedSearchParam(0.2)
+	_, errSp := mc.SearchIterator(ctx, client.NewSearchIteratorOption(collName, common.DefaultFloatVecFieldName, spSparse, queryVec[0], entity.L2))
+	common.CheckErr(t, errSp, true)
+}
+
+func TestSearchIteratorInvalidVectors(t *testing.T) {
+	ctx := createContext(t, time.Second*common.DefaultTimeout)
+	// connect and create collection
+	mc := createMilvusClient(ctx, t)
+	cp := CollectionParams{CollectionFieldsType: Int64VarcharSparseVec, AutoID: false, EnableDynamicField: false,
+		ShardsNum: common.DefaultShards, Dim: common.DefaultDim, MaxLength: 100}
+	collName := createCollection(ctx, t, mc, cp)
+
+	// insert
+	dp := DataParams{CollectionName: collName, PartitionName: "", CollectionFieldsType: Int64VarcharSparseVec,
+		start: 0, nb: 200, dim: common.DefaultDim, EnableDynamicField: false, WithRows: false}
+	_, _ = insertData(ctx, t, mc, dp)
+
+	idx, _ := entity.NewIndexHNSW(entity.L2, 8, 96)
+	_ = mc.CreateIndex(ctx, collName, common.DefaultFloatVecFieldName, idx, false)
+	idxSparse, _ := entity.NewIndexSparseWAND(entity.IP, 0.01)
+	_ = mc.CreateIndex(ctx, collName, common.DefaultSparseVecFieldName, idxSparse, false)
+
+	// Load collection
+	errLoad := mc.LoadCollection(ctx, collName, false)
+	common.CheckErr(t, errLoad, true)
+
+	// search iterator with not existed collection name
+	sp, _ := entity.NewIndexHNSWSearchParam(70)
+
+	// search iterator with inconsistent vector field name
+	queryVec := common.GenSearchVectors(1, common.DefaultDim, entity.FieldTypeFloatVector)
+	_, err := mc.SearchIterator(ctx, client.NewSearchIteratorOption(collName, common.DefaultBinaryVecFieldName, sp, queryVec[0], entity.L2))
+	common.CheckErr(t, err, false, "vector field binaryVec not found")
+
+	// dim not match
+	queryVec = common.GenSearchVectors(1, common.DefaultDim-8, entity.FieldTypeFloatVector)
+	_, err = mc.SearchIterator(ctx, client.NewSearchIteratorOption(collName, common.DefaultFloatVecFieldName, sp, queryVec[0], entity.L2))
+	common.CheckErr(t, err, false, "vector dimension mismatch, expected vector size(byte) 512, actual 480")
+
+	// type not match
+	queryVec = common.GenSearchVectors(1, common.DefaultDim*8, entity.FieldTypeBinaryVector)
+	_, err = mc.SearchIterator(ctx, client.NewSearchIteratorOption(collName, common.DefaultFloatVecFieldName, sp, queryVec[0], entity.L2))
+	common.CheckErr(t, err, false, "vector type must be the same")
+
+	queryVec = common.GenSearchVectors(1, 60, entity.FieldTypeSparseVector)
+	_, err = mc.SearchIterator(ctx, client.NewSearchIteratorOption(collName, common.DefaultFloatVecFieldName, sp, queryVec[0], entity.L2))
+	common.CheckErr(t, err, false, "vector type must be the same")
+}
+
+func TestSearchIteratorInvalidExpr(t *testing.T) {
+	ctx := createContext(t, time.Second*common.DefaultTimeout)
+	// connect
+	mc := createMilvusClient(ctx, t)
+
+	// create collection
+	cp := CollectionParams{CollectionFieldsType: Int64FloatVecJSON, AutoID: false, EnableDynamicField: true,
+		ShardsNum: common.DefaultShards, Dim: common.DefaultDim,
+	}
+	collName := createCollection(ctx, t, mc, cp)
+
+	// insert
+	dp := DataParams{CollectionName: collName, PartitionName: "", CollectionFieldsType: Int64FloatVecJSON,
+		start: 0, nb: common.DefaultNb, dim: common.DefaultDim, EnableDynamicField: true,
+	}
+	_, _ = insertData(ctx, t, mc, dp)
+
+	idx, _ := entity.NewIndexHNSW(entity.L2, 8, 96)
+	_ = mc.CreateIndex(ctx, collName, common.DefaultFloatVecFieldName, idx, false)
+
+	// Load collection
+	errLoad := mc.LoadCollection(ctx, collName, false)
+	common.CheckErr(t, errLoad, true)
+
+	// search iterator with invalid expr
+	sp, _ := entity.NewIndexHNSWSearchParam(70)
+	queryVec := common.GenSearchVectors(1, common.DefaultDim, entity.FieldTypeFloatVector)
+	for _, _invalidExprs := range common.InvalidExpressions {
+		_, err := mc.SearchIterator(ctx, client.NewSearchIteratorOption(collName, common.DefaultFloatVecFieldName, sp, queryVec[0], entity.L2).WithExpr(_invalidExprs.Expr))
+		common.CheckErr(t, err, _invalidExprs.ErrNil, _invalidExprs.ErrMsg)
+	}
+}
+
+func TestSearchIteratorOutputFieldDynamic(t *testing.T) {
+	ctx := createContext(t, time.Second*common.DefaultTimeout)
+	// connect
+	mc := createMilvusClient(ctx, t)
+	for _, dynamic := range [2]bool{false, true} {
+		// create collection
+		cp := CollectionParams{CollectionFieldsType: Int64FloatVec, AutoID: false, EnableDynamicField: dynamic,
+			ShardsNum: common.DefaultShards, Dim: common.DefaultDim}
+		collName := createCollection(ctx, t, mc, cp)
+		// insert
+		nb := 201
+		dp := DataParams{CollectionName: collName, PartitionName: "", CollectionFieldsType: Int64FloatVec,
+			start: 0, nb: nb, dim: common.DefaultDim, EnableDynamicField: dynamic, WithRows: false}
+		_, _ = insertData(ctx, t, mc, dp)
+
+		idx, _ := entity.NewIndexHNSW(entity.L2, 8, 96)
+		_ = mc.CreateIndex(ctx, collName, common.DefaultFloatVecFieldName, idx, false)
+
+		// Load collection
+		errLoad := mc.LoadCollection(ctx, collName, false)
+		common.CheckErr(t, errLoad, true)
+
+		// search iterator with not existed output fields: if dynamic, non-existent field are equivalent to dynamic field
+		sp, _ := entity.NewIndexHNSWSearchParam(70)
+		queryVec := common.GenSearchVectors(1, common.DefaultDim, entity.FieldTypeFloatVector)
+		itr, errOutput := mc.SearchIterator(ctx, client.NewSearchIteratorOption(collName, common.DefaultFloatVecFieldName, sp, queryVec[0], entity.L2).WithOutputFields("aaa"))
+
+		//itr, errOutput := mc.QueryIterator(ctx, client.NewQueryIteratorOption(collName).WithOutputFields("aaa"))
+		if dynamic {
+			common.CheckErr(t, errOutput, true)
+			expFields := []string{common.DefaultDynamicFieldName}
+			common.CheckSearchIteratorResult(ctx, t, itr, nb, common.WithExpBatchSize(common.GenBatchSizes(nb, common.DefaultBatchSize)), common.WithExpOutputFields(expFields))
+		} else {
+			common.CheckErr(t, errOutput, false, "field aaa not exist")
+		}
+	}
+}
+
+func TestSearchIteratorExpr(t *testing.T) {
+	ctx := createContext(t, time.Second*common.DefaultTimeout)
+	// connect
+	mc := createMilvusClient(ctx, t)
+
+	// create collection
+	cp := CollectionParams{CollectionFieldsType: AllFields, AutoID: false, EnableDynamicField: true,
+		ShardsNum: common.DefaultShards, Dim: common.DefaultDim, MaxCapacity: common.TestCapacity}
+	collName := createCollection(ctx, t, mc, cp, client.WithConsistencyLevel(entity.ClStrong))
+
+	// insert
+	dp := DataParams{CollectionName: collName, PartitionName: "", CollectionFieldsType: AllFields,
+		start: 0, nb: common.DefaultNb, dim: common.DefaultDim, EnableDynamicField: true, WithRows: false}
+	_, err := insertData(ctx, t, mc, dp, common.WithArrayCapacity(common.TestCapacity))
+	common.CheckErr(t, err, true)
+	mc.Flush(ctx, collName, false)
+
+	indexHnsw, _ := entity.NewIndexHNSW(entity.L2, 8, 96)
+	indexBinary, _ := entity.NewIndexBinIvfFlat(entity.JACCARD, 64)
+	for _, fieldName := range common.AllVectorsFieldsName {
+		if fieldName == common.DefaultBinaryVecFieldName {
+			mc.CreateIndex(ctx, collName, fieldName, indexBinary, false)
+		} else {
+			mc.CreateIndex(ctx, collName, fieldName, indexHnsw, false)
+		}
+	}
+
+	// Load collection
+	errLoad := mc.LoadCollection(ctx, collName, false)
+	common.CheckErr(t, errLoad, true)
+	batch := 500
+
+	sp, _ := entity.NewIndexHNSWSearchParam(70)
+	for _, exprLimit := range common.ExprLimits {
+		log.Printf("case expr is: %s, limit=%d", exprLimit.Expr, exprLimit.Count)
+		queryVec := common.GenSearchVectors(1, common.DefaultDim, entity.FieldTypeFloatVector)
+		itr, err := mc.SearchIterator(ctx, client.NewSearchIteratorOption(collName, common.DefaultFloatVecFieldName, sp, queryVec[0], entity.L2).WithExpr(exprLimit.Expr))
+		common.CheckErr(t, err, true)
+		common.CheckSearchIteratorResult(ctx, t, itr, exprLimit.Count, common.WithExpBatchSize(common.GenBatchSizes(exprLimit.Count, batch)))
+	}
+}
+
+func TestSearchIteratorPartitions(t *testing.T) {
+	ctx := createContext(t, time.Second*common.DefaultTimeout)
+	// connect and create collection
+	mc := createMilvusClient(ctx, t)
+	cp := CollectionParams{CollectionFieldsType: Int64FloatVec, AutoID: false, EnableDynamicField: false,
+		ShardsNum: common.DefaultShards, Dim: common.DefaultDim}
+	collName := createCollection(ctx, t, mc, cp)
+	pName := "p1"
+	err := mc.CreatePartition(ctx, collName, pName)
+	common.CheckErr(t, err, true)
+
+	// insert [0, nb) into partition: _default
+	nb := 1500
+	dp := DataParams{CollectionName: collName, PartitionName: "", CollectionFieldsType: Int64FloatVec,
+		start: 0, nb: nb, dim: common.DefaultDim, EnableDynamicField: false, WithRows: false}
+	_, _ = insertData(ctx, t, mc, dp)
+	// insert [nb, nb*2) into partition: p1
+	dp1 := DataParams{CollectionName: collName, PartitionName: pName, CollectionFieldsType: Int64FloatVec,
+		start: nb, nb: nb, dim: common.DefaultDim, EnableDynamicField: false, WithRows: false}
+	_, _ = insertData(ctx, t, mc, dp1)
+
+	idx, _ := entity.NewIndexHNSW(entity.L2, 8, 96)
+	_ = mc.CreateIndex(ctx, collName, common.DefaultFloatVecFieldName, idx, false)
+
+	// Load collection
+	errLoad := mc.LoadCollection(ctx, collName, false)
+	common.CheckErr(t, errLoad, true)
+
+	// query iterator with partition
+	expr := fmt.Sprintf("%s < %d", common.DefaultIntFieldName, nb)
+	mParLimit := map[string]int{
+		common.DefaultPartition: nb,
+		pName:                   0,
+	}
+	sp, _ := entity.NewIndexHNSWSearchParam(70)
+	for par, limit := range mParLimit {
+		queryVec := common.GenSearchVectors(1, common.DefaultDim, entity.FieldTypeFloatVector)
+		itr, err := mc.SearchIterator(ctx, client.NewSearchIteratorOption(collName, common.DefaultFloatVecFieldName, sp, queryVec[0], entity.L2).WithExpr(expr).WithPartitions(par))
+		common.CheckErr(t, err, true)
+		common.CheckSearchIteratorResult(ctx, t, itr, limit, common.WithExpBatchSize(common.GenBatchSizes(limit, common.DefaultBatchSize)))
+	}
+}
+
+func TestSearchIteratorRange(t *testing.T) {
+	ctx := createContext(t, time.Second*common.DefaultTimeout)
+	// connect create collection
+	mc := createMilvusClient(ctx, t)
+	cp := CollectionParams{CollectionFieldsType: Int64FloatVecJSON, AutoID: false, EnableDynamicField: true,
+		ShardsNum: common.DefaultShards, Dim: common.DefaultDim}
+	collName := createCollection(ctx, t, mc, cp)
+
+	// insert
+	dp := DataParams{CollectionName: collName, PartitionName: "", CollectionFieldsType: Int64FloatVecJSON,
+		start: 0, nb: common.DefaultNb, dim: common.DefaultDim, EnableDynamicField: true,
+	}
+	_, _ = insertData(ctx, t, mc, dp)
+
+	idx, _ := entity.NewIndexHNSW(entity.L2, 8, 96)
+	_ = mc.CreateIndex(ctx, collName, common.DefaultFloatVecFieldName, idx, false)
+
+	// Load collection
+	errLoad := mc.LoadCollection(ctx, collName, false)
+	common.CheckErr(t, errLoad, true)
+
+	// search iterator with invalid expr
+	sp, _ := entity.NewIndexHNSWSearchParam(70)
+	//sp.AddRangeFilter(0.1)
+	//sp.AddRadius(0.8)
+	queryVec := common.GenSearchVectors(1, common.DefaultDim, entity.FieldTypeFloatVector)
+	for _, _invalidExprs := range common.InvalidExpressions {
+		_, err := mc.SearchIterator(ctx, client.NewSearchIteratorOption(collName, common.DefaultFloatVecFieldName, sp, queryVec[0], entity.L2).WithExpr(_invalidExprs.Expr))
+		common.CheckErr(t, err, _invalidExprs.ErrNil, _invalidExprs.ErrMsg)
 	}
 }
 

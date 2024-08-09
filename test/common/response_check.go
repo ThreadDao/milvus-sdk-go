@@ -103,7 +103,7 @@ func CheckNotContainsCollection(t *testing.T, collections []*entity.Collection, 
 	require.NotContainsf(t, allCollNames, collName, fmt.Sprintf("The collection %s should not be in: %v", collName, allCollNames))
 }
 
-// CheckInsertResult check insert result, ids len (insert count), ids data (pks, but no auto ids)
+// CheckInsertResult check insert result, ids len (insert Count), ids data (pks, but no auto ids)
 func CheckInsertResult(t *testing.T, actualIds entity.Column, expIds entity.Column) {
 	require.Equal(t, actualIds.Len(), expIds.Len())
 	switch expIds.Type() {
@@ -256,6 +256,9 @@ type CheckIteratorOption func(opt *checkIteratorOpt)
 type checkIteratorOpt struct {
 	expBatchSize    []int
 	expOutputFields []string
+	expRangeFilter  float64
+	expRadius       float64
+	metricType      entity.MetricType
 }
 
 func WithExpBatchSize(expBatchSize []int) CheckIteratorOption {
@@ -267,6 +270,20 @@ func WithExpBatchSize(expBatchSize []int) CheckIteratorOption {
 func WithExpOutputFields(expOutputFields []string) CheckIteratorOption {
 	return func(opt *checkIteratorOpt) {
 		opt.expOutputFields = expOutputFields
+	}
+}
+
+func WithExpRangeFilter(expRangeFilter float64, metricType entity.MetricType) CheckIteratorOption {
+	return func(opt *checkIteratorOpt) {
+		opt.expRangeFilter = expRangeFilter
+		opt.metricType = metricType
+	}
+}
+
+func WithExpRadius(expRadius float64, metricType entity.MetricType) CheckIteratorOption {
+	return func(opt *checkIteratorOpt) {
+		opt.expRadius = expRadius
+		opt.metricType = metricType
 	}
 }
 
@@ -301,6 +318,62 @@ func CheckQueryIteratorResult(ctx context.Context, t *testing.T, itr *client.Que
 		}
 		actualLimit = actualLimit + rs.Len()
 	}
+	require.Equal(t, expLimit, actualLimit)
+	if opt.expBatchSize != nil {
+		log.Printf("QueryIterator result len: %v", actualBatchSize)
+		require.True(t, EqualIntSlice(opt.expBatchSize, actualBatchSize))
+	}
+}
+
+// check searchIterator: result limit, each batch size, output fields
+func CheckSearchIteratorResult(ctx context.Context, t *testing.T, itr *client.SearchIterator, expLimit int, opts ...CheckIteratorOption) {
+	opt := &checkIteratorOpt{}
+	for _, o := range opts {
+		o(opt)
+	}
+	actualLimit := 0
+	var actualBatchSize []int
+	for {
+		rs, err := itr.Next(ctx)
+		if err != nil {
+			if err == io.EOF {
+				log.Println(err)
+				break
+			}
+			log.Fatalf("SearchIterator next gets error: %v", err)
+		}
+		log.Printf("SearchIterator result len: %d", rs.ResultCount)
+		actualLimit = actualLimit + rs.ResultCount
+		if opt.expBatchSize != nil {
+			actualBatchSize = append(actualBatchSize, rs.ResultCount)
+		}
+		// check output fields
+		var actualOutputFields []string
+		if opt.expOutputFields != nil {
+			for _, column := range rs.Fields {
+				actualOutputFields = append(actualOutputFields, column.Name())
+			}
+			require.ElementsMatch(t, opt.expOutputFields, actualOutputFields)
+		}
+		// check distance range
+		if opt.metricType != "" {
+			switch opt.metricType {
+			case entity.L2, entity.JACCARD, entity.HAMMING:
+				minScores := rs.Scores[0]
+				maxScores := rs.Scores[rs.ResultCount-1]
+				require.GreaterOrEqual(t, minScores, opt.expRangeFilter)
+				require.Less(t, maxScores, opt.expRadius)
+			case entity.COSINE, entity.IP:
+				maxScores := rs.Scores[0]
+				minScores := rs.Scores[rs.ResultCount-1]
+				require.GreaterOrEqual(t, minScores, opt.expRadius)
+				require.Less(t, maxScores, opt.expRangeFilter)
+			default:
+				log.Printf("metric type %s not supported", opt.metricType)
+			}
+		}
+	}
+	// check batchSize and limit
 	require.Equal(t, expLimit, actualLimit)
 	if opt.expBatchSize != nil {
 		log.Printf("QueryIterator result len: %v", actualBatchSize)

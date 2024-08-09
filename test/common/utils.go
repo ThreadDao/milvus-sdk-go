@@ -62,7 +62,7 @@ const (
 const (
 	MaxPartitionNum         = 1024
 	DefaultDynamicFieldName = "$meta"
-	QueryCountFieldName     = "count(*)"
+	QueryCountFieldName     = "Count(*)"
 	DefaultPartition        = "_default"
 	DefaultIndexName        = "_default_idx_102"
 	DefaultIndexNameBinary  = "_default_idx_100"
@@ -1390,7 +1390,7 @@ func GenSearchVectors(nq int, dim int64, dataType entity.FieldType) []entity.Vec
 	return vectors
 }
 
-// InvalidExprStruct invalid expr
+// InvalidExprStruct invalid Expr
 type InvalidExprStruct struct {
 	Expr   string
 	ErrNil bool
@@ -1400,7 +1400,7 @@ type InvalidExprStruct struct {
 var InvalidExpressions = []InvalidExprStruct{
 	// https://github.com/milvus-io/milvus-sdk-go/issues/777
 	{Expr: "id in [0]", ErrNil: true, ErrMsg: "fieldName(id) not found"},                                          // not exist field but no error
-	{Expr: "int64 in not [0]", ErrNil: false, ErrMsg: "cannot parse expression"},                                  // wrong term expr keyword
+	{Expr: "int64 in not [0]", ErrNil: false, ErrMsg: "cannot parse expression"},                                  // wrong term Expr keyword
 	{Expr: "int64 > 10 AND int64 < 100", ErrNil: false, ErrMsg: "cannot parse expression"},                        // AND isn't supported
 	{Expr: "int64 < 10 OR int64 > 100", ErrNil: false, ErrMsg: "cannot parse expression"},                         // OR isn't supported
 	{Expr: "int64 < floatVec", ErrNil: false, ErrMsg: "not supported"},                                            // unsupported compare field
@@ -1421,6 +1421,62 @@ var InvalidExpressions = []InvalidExprStruct{
 	{Expr: fmt.Sprintf("json_contains_aby (%s['list'], 2)", DefaultJSONFieldName), ErrNil: false, ErrMsg: "invalid expression: json_contains_aby"},
 	{Expr: fmt.Sprintf("%s[-1] > %d", DefaultInt8ArrayField, TestCapacity), ErrNil: false, ErrMsg: "cannot parse expression"}, //  array[-1] >
 	{Expr: fmt.Sprintf(fmt.Sprintf("%s[-1] > 1", DefaultJSONFieldName)), ErrNil: false, ErrMsg: "invalid expression"},         //  json[-1] >
+}
+
+type exprCount struct {
+	Expr  string
+	Count int
+}
+
+var ExprLimits = []exprCount{
+	{Expr: fmt.Sprintf("%s in [0, 1, 2]", DefaultIntFieldName), Count: 3},
+	{Expr: fmt.Sprintf("%s >= 1000 || %s > 2000", DefaultIntFieldName, DefaultIntFieldName), Count: 2000},
+	{Expr: fmt.Sprintf("%s >= 1000 and %s < 2000", DefaultIntFieldName, DefaultIntFieldName), Count: 1000},
+
+	//json and dynamic field filter Expr: == < in bool/ list/ int
+	{Expr: fmt.Sprintf("%s['number'] == 0", DefaultJSONFieldName), Count: 1500 / 2},
+	{Expr: fmt.Sprintf("%s['number'] < 100 and %s['number'] != 0", DefaultJSONFieldName, DefaultJSONFieldName), Count: 50},
+	{Expr: fmt.Sprintf("%s < 100", DefaultDynamicNumberField), Count: 100},
+	{Expr: "dynamicNumber % 2 == 0", Count: 1500},
+	{Expr: fmt.Sprintf("%s == false", DefaultDynamicBoolField), Count: 2000},
+	{Expr: fmt.Sprintf("%s in ['1', '2'] ", DefaultDynamicStringField), Count: 2},
+	{Expr: fmt.Sprintf("%s['string'] in ['1', '2', '5'] ", DefaultJSONFieldName), Count: 3},
+	{Expr: fmt.Sprintf("%s['list'] == [1, 2] ", DefaultJSONFieldName), Count: 1},
+	{Expr: fmt.Sprintf("%s['list'][0] < 10 ", DefaultJSONFieldName), Count: 5},
+	{Expr: fmt.Sprintf("%s[\"dynamicList\"] != [2, 3]", DefaultDynamicFieldName), Count: 0},
+
+	// json contains
+	{Expr: fmt.Sprintf("json_contains (%s['list'], 2)", DefaultJSONFieldName), Count: 1},
+	{Expr: fmt.Sprintf("json_contains (%s['number'], 0)", DefaultJSONFieldName), Count: 0},
+	{Expr: fmt.Sprintf("JSON_CONTAINS_ANY (%s['list'], [1, 3])", DefaultJSONFieldName), Count: 2},
+	// string like
+	{Expr: "dynamicString like '1%' ", Count: 1111},
+
+	// key exist
+	{Expr: fmt.Sprintf("exists %s['list']", DefaultJSONFieldName), Count: DefaultNb / 2},
+	{Expr: fmt.Sprintf("exists a "), Count: 0},
+	{Expr: fmt.Sprintf("exists %s ", DefaultDynamicStringField), Count: DefaultNb},
+
+	// data type not match and no error
+	{Expr: fmt.Sprintf("%s['number'] == '0' ", DefaultJSONFieldName), Count: 0},
+
+	// json field
+	{Expr: fmt.Sprintf("%s >= 1500", DefaultJSONFieldName), Count: 1500 / 2},                                  // json >= 1500
+	{Expr: fmt.Sprintf("%s > 1499.5", DefaultJSONFieldName), Count: 1500 / 2},                                 // json >= 1500.0
+	{Expr: fmt.Sprintf("%s like '21%%'", DefaultJSONFieldName), Count: 100 / 4},                               // json like '21%'
+	{Expr: fmt.Sprintf("%s == [1503, 1504]", DefaultJSONFieldName), Count: 1},                                 // json == [1,2]
+	{Expr: fmt.Sprintf("%s[0] > 1", DefaultJSONFieldName), Count: 1500 / 4},                                   // json[0] > 1
+	{Expr: fmt.Sprintf("%s[0][0] > 1", DefaultJSONFieldName), Count: 0},                                       // json == [1,2]
+	{Expr: fmt.Sprintf("%s[0] == false", DefaultBoolArrayField), Count: DefaultNb / 2},                        //  array[0] ==
+	{Expr: fmt.Sprintf("%s[0] > 0", DefaultInt64ArrayField), Count: DefaultNb - 1},                            //  array[0] >
+	{Expr: fmt.Sprintf("%s[0] > 0", DefaultInt8ArrayField), Count: 1524},                                      //  array[0] > int8 range: [-128, 127]
+	{Expr: fmt.Sprintf("array_contains (%s, %d)", DefaultInt16ArrayField, TestCapacity), Count: TestCapacity}, // array_contains(array, 1)
+	{Expr: fmt.Sprintf("json_contains (%s, 1)", DefaultInt32ArrayField), Count: 2},                            // json_contains(array, 1)
+	{Expr: fmt.Sprintf("array_contains (%s, 1000000)", DefaultInt32ArrayField), Count: 0},                     // array_contains(array, 1)
+	{Expr: fmt.Sprintf("json_contains_all (%s, [90, 91])", DefaultInt64ArrayField), Count: 91},                // json_contains_all(array, [x])
+	{Expr: fmt.Sprintf("json_contains_any (%s, [0, 100, 10])", DefaultFloatArrayField), Count: 101},           // json_contains_any (array, [x])
+	{Expr: fmt.Sprintf("%s == [0, 1]", DefaultDoubleArrayField), Count: 0},                                    //  array ==
+	{Expr: fmt.Sprintf("array_length(%s) == %d", DefaultDoubleArrayField, TestCapacity), Count: DefaultNb},    //  array_length
 }
 
 func GenBatchSizes(limit int, batch int) []int {
